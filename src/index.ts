@@ -10,10 +10,23 @@ interface TrackPoint {
 
 interface Track {
   name: string;
+  id: string;
   points: TrackPoint[];
 }
 
-function parseFitFile(filePath: string): Promise<TrackPoint[]> {
+interface ParsedTrack {
+  points: TrackPoint[];
+  session?: FitSession;
+}
+
+interface FitSession {
+  start_time?: string | Date;
+  sport?: string;
+  total_distance?: number;
+  total_timer_time?: number;
+}
+
+function parseFitFile(filePath: string): Promise<ParsedTrack> {
   return new Promise((resolve, reject) => {
     const buffer = fs.readFileSync(filePath);
     const parser = new FitParser({
@@ -33,9 +46,38 @@ function parseFitFile(filePath: string): Promise<TrackPoint[]> {
       const points: TrackPoint[] = (data.records ?? [])
         .filter(r => r.position_lat != null && r.position_long != null)
         .map(r => ({ lat: r.position_lat as number, lon: r.position_long as number }));
-      resolve(points);
+      const sessions = data.sessions as FitSession[] | undefined;
+      resolve({ points, session: sessions?.[0] });
     });
   });
+}
+
+function formatTrackName(session: FitSession | undefined, fallback: string): string {
+  if (!session) return fallback;
+
+  const parts: string[] = [];
+  if (session.start_time) {
+    const start = new Date(session.start_time);
+    if (!Number.isNaN(start.getTime())) {
+      parts.push(start.toLocaleString(undefined, {
+        month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+      }));
+    }
+  }
+  if (session.sport) {
+    parts.push(session.sport.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()));
+  }
+  if (typeof session.total_distance === 'number' && session.total_distance > 0) {
+    parts.push(`${session.total_distance.toFixed(1)} km`);
+  }
+  if (typeof session.total_timer_time === 'number' && session.total_timer_time > 0) {
+    const minutes = Math.round(session.total_timer_time / 60);
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    parts.push(hours > 0 ? `${hours}h ${remainingMinutes}m` : `${minutes} min`);
+  }
+
+  return parts.length > 0 ? parts.join(' · ') : fallback;
 }
 
 function buildHTML(tracks: Track[]): string {
@@ -162,11 +204,17 @@ function buildHTML(tracks: Track[]): string {
 
       const item = document.createElement('div');
       item.className = 'track-item';
-      item.title = track.name;
-      item.innerHTML =
-        '<div class="swatch" style="background:' + color + '"></div>' +
-        '<span class="track-name">' + track.name + '</span>' +
-        '<span class="track-pts">' + track.points.length.toLocaleString() + '</span>';
+      item.title = track.id;
+      const swatch = document.createElement('div');
+      swatch.className = 'swatch';
+      swatch.style.background = color;
+      const name = document.createElement('span');
+      name.className = 'track-name';
+      name.textContent = track.name;
+      const pointCount = document.createElement('span');
+      pointCount.className = 'track-pts';
+      pointCount.textContent = track.points.length.toLocaleString();
+      item.append(swatch, name, pointCount);
 
       item.addEventListener('click', () => {
         if (activeItem) activeItem.classList.remove('active');
@@ -191,7 +239,7 @@ function buildHTML(tracks: Track[]): string {
 async function main(): Promise<void> {
   const folderArg = process.argv[2];
   if (!folderArg) {
-    console.error('Usage: ts-node src/index.ts <folder-with-fit-files>');
+    console.error('Usage: tsx src/index.ts <folder-with-fit-files>');
     process.exit(1);
   }
 
@@ -216,11 +264,11 @@ async function main(): Promise<void> {
   for (const file of fitFiles) {
     const filePath = path.join(folder, file);
     try {
-      const points = await parseFitFile(filePath);
-      const label = points.length > 0 ? `${points.length} GPS points` : 'no GPS data';
-      console.log(`  ${points.length > 0 ? '✓' : '–'} ${file}: ${label}`);
-      if (points.length > 0) {
-        tracks.push({ name: file, points });
+      const parsed = await parseFitFile(filePath);
+      const label = parsed.points.length > 0 ? `${parsed.points.length} GPS points` : 'no GPS data';
+      console.log(`  ${parsed.points.length > 0 ? '✓' : '–'} ${file}: ${label}`);
+      if (parsed.points.length > 0) {
+        tracks.push({ name: formatTrackName(parsed.session, file), id: file, points: parsed.points });
       }
     } catch (err) {
       console.error(`  ✗ ${file}: ${err instanceof Error ? err.message : err}`);
