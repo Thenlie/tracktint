@@ -10,9 +10,19 @@ interface TrackPoint {
 
 interface Track {
   name: string;
+  title: string;
+  subtitle: string;
   id: string;
   startTime: number;
   distance: number;
+  timerTime: number;
+  elapsedTime: number;
+  avgHeartRate: number;
+  maxHeartRate: number;
+  ascent: number;
+  descent: number;
+  calories: number;
+  maxSpeed: number;
   points: TrackPoint[];
 }
 
@@ -26,6 +36,13 @@ interface FitSession {
   sport?: string;
   total_distance?: number;
   total_timer_time?: number;
+  total_elapsed_time?: number;
+  avg_heart_rate?: number;
+  max_heart_rate?: number;
+  total_ascent?: number;
+  total_descent?: number;
+  total_calories?: number;
+  max_speed?: number;
 }
 
 function parseFitFile(filePath: string): Promise<ParsedTrack> {
@@ -49,9 +66,58 @@ function parseFitFile(filePath: string): Promise<ParsedTrack> {
         .filter(r => r.position_lat != null && r.position_long != null)
         .map(r => ({ lat: r.position_lat as number, lon: r.position_long as number }));
       const sessions = data.sessions as FitSession[] | undefined;
-      resolve({ points, session: sessions?.[0] });
+      resolve({ points, session: slimSession(sessions?.[0]) });
     });
   });
+}
+
+const CACHE_FILE = '.tracktint-cache.json';
+const CACHE_VERSION = 1;
+
+interface CacheEntry {
+  mtimeMs: number;
+  size: number;
+  parsed: ParsedTrack;
+}
+
+interface Cache {
+  version: number;
+  entries: Record<string, CacheEntry>;
+}
+
+function loadCache(folder: string): Cache {
+  const empty: Cache = { version: CACHE_VERSION, entries: {} };
+  try {
+    const cache = JSON.parse(fs.readFileSync(path.join(folder, CACHE_FILE), 'utf8')) as Cache;
+    return cache.version === CACHE_VERSION ? cache : empty;
+  } catch {
+    return empty;
+  }
+}
+
+function saveCache(folder: string, cache: Cache): void {
+  try {
+    fs.writeFileSync(path.join(folder, CACHE_FILE), JSON.stringify(cache));
+  } catch (err) {
+    console.error(`Could not write cache: ${err instanceof Error ? err.message : err}`);
+  }
+}
+
+function slimSession(s: FitSession | undefined): FitSession | undefined {
+  if (!s) return undefined;
+  return {
+    start_time: s.start_time,
+    sport: s.sport,
+    total_distance: s.total_distance,
+    total_timer_time: s.total_timer_time,
+    total_elapsed_time: s.total_elapsed_time,
+    avg_heart_rate: s.avg_heart_rate,
+    max_heart_rate: s.max_heart_rate,
+    total_ascent: s.total_ascent,
+    total_descent: s.total_descent,
+    total_calories: s.total_calories,
+    max_speed: s.max_speed,
+  };
 }
 
 function loadNames(folder: string): Record<string, string> {
@@ -60,8 +126,15 @@ function loadNames(folder: string): Record<string, string> {
   return JSON.parse(fs.readFileSync(namesFile, 'utf8')) as Record<string, string>;
 }
 
-function formatTrackName(session: FitSession | undefined, fallback: string, activityName?: string): string {
-  if (!session) return activityName ?? fallback;
+function formatTrackName(
+  session: FitSession | undefined,
+  fallback: string,
+  activityName?: string,
+): { name: string; title: string; subtitle: string } {
+  if (!session) {
+    const n = activityName ?? fallback;
+    return { name: n, title: n, subtitle: '' };
+  }
 
   const parts: string[] = [];
   if (activityName) parts.push(activityName);
@@ -83,7 +156,8 @@ function formatTrackName(session: FitSession | undefined, fallback: string, acti
     parts.push(hours > 0 ? `${hours}h ${remainingMinutes}m` : `${minutes} min`);
   }
 
-  return parts.length > 0 ? parts.join(' · ') : fallback;
+  if (parts.length === 0) return { name: fallback, title: fallback, subtitle: '' };
+  return { name: parts.join(' · '), title: parts[0], subtitle: parts.slice(1).join(' · ') };
 }
 
 function buildHTML(tracks: Track[]): string {
@@ -174,10 +248,18 @@ function buildHTML(tracks: Track[]): string {
       border-radius: 3px;
       flex-shrink: 0;
     }
+    .track-text { flex: 1; min-width: 0; }
     .track-name {
       font-size: 12px;
       color: #e6e6e6;
-      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .track-sub {
+      font-size: 11px;
+      color: #888;
+      margin-top: 1px;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -187,6 +269,27 @@ function buildHTML(tracks: Track[]): string {
       color: #888;
       flex-shrink: 0;
     }
+    #detail {
+      display: none;
+      position: absolute;
+      left: 12px;
+      bottom: 28px;
+      z-index: 1000;
+      width: 300px;
+      max-width: calc(100vw - 24px);
+      background: rgba(20, 22, 28, 0.95);
+      border-radius: 10px;
+      box-shadow: 0 2px 16px rgba(0, 0, 0, 0.5);
+      padding: 14px 16px 16px;
+      color: #e6e6e6;
+    }
+    #detail .d-head { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 12px; }
+    #detail .d-title { flex: 1; font-size: 13px; font-weight: 600; line-height: 1.35; }
+    #detail .d-close { background: none; border: none; color: #888; font-size: 18px; line-height: 1; cursor: pointer; }
+    #detail .d-close:hover { color: #fff; }
+    #detail .d-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+    #detail .d-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px; color: #888; }
+    #detail .d-value { font-size: 16px; font-weight: 600; margin-top: 2px; }
     #empty-msg {
       font-size: 13px;
       color: #999;
@@ -215,6 +318,25 @@ function buildHTML(tracks: Track[]): string {
     <h2>GPS Tracks</h2>
     <div id="track-list"></div>
   </div>
+  <div id="detail">
+    <div class="d-head">
+      <div class="d-title"></div>
+      <button class="d-close" title="Close">&times;</button>
+    </div>
+    <div class="d-grid"></div>
+  </div>
+  <script>
+    // Live reload: server restarts (tsx watch) drop the stream; reload once it's back.
+    (function () {
+      const es = new EventSource('/__reload');
+      es.onerror = () => {
+        es.close();
+        const poll = setInterval(() => {
+          fetch('/', { cache: 'no-store' }).then(r => { if (r.ok) { clearInterval(poll); location.reload(); } }).catch(() => {});
+        }, 500);
+      };
+    })();
+  </script>
   <script>
     const COLORS = ${colorsJson};
     const tracks = ${tracksJson};
@@ -261,13 +383,22 @@ function buildHTML(tracks: Track[]): string {
       swatch.style.background = color;
       const name = document.createElement('span');
       name.className = 'track-name';
-      name.textContent = track.name;
+      name.textContent = track.title;
+      const text = document.createElement('div');
+      text.className = 'track-text';
+      text.appendChild(name);
+      if (track.subtitle) {
+        const sub = document.createElement('div');
+        sub.className = 'track-sub';
+        sub.textContent = track.subtitle;
+        text.appendChild(sub);
+      }
       const pointCount = document.createElement('span');
       pointCount.className = 'track-pts';
       pointCount.textContent = track.distance > 0 ? (track.distance * 0.621371).toFixed(1) + ' mi' : '';
-      item.append(swatch, name, pointCount);
+      item.append(swatch, text, pointCount);
 
-      item.addEventListener('click', () => {
+      function selectTrack() {
         if (activeItem) activeItem.classList.remove('active');
         item.classList.add('active');
         activeItem = item;
@@ -275,12 +406,64 @@ function buildHTML(tracks: Track[]): string {
         if (!heatOn) {
           polylines.forEach((p, j) => p.setStyle({ weight: j === i ? 5 : 2, opacity: j === i ? 1 : 0.35 }));
         }
+        showDetail(track);
+      }
+
+      item.addEventListener('click', () => {
+        selectTrack();
         map.fitBounds(poly.getBounds(), { padding: [40, 40] });
       });
+      poly.on('click', selectTrack);
 
       items.push({ item, track });
       trackList.appendChild(item);
     });
+
+    // ---- Detail dialog ----
+    const detailEl = document.getElementById('detail');
+    const KM_TO_MI = 0.621371, KM_TO_FT = 3280.84;
+
+    function fmtDuration(sec) {
+      const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = Math.round(sec % 60);
+      return h > 0 ? h + 'h ' + String(m).padStart(2, '0') + 'm' : m + 'm ' + String(s).padStart(2, '0') + 's';
+    }
+    function fmtPace(secPerMi) {
+      const m = Math.floor(secPerMi / 60), s = Math.round(secPerMi % 60);
+      return m + ':' + String(s).padStart(2, '0') + ' /mi';
+    }
+
+    function showDetail(track) {
+      const mi = track.distance * KM_TO_MI;
+      const rows = [
+        ['Distance', mi > 0 ? mi.toFixed(2) + ' mi' : null],
+        ['Moving time', track.timerTime > 0 ? fmtDuration(track.timerTime) : null],
+        ['Elapsed time', track.elapsedTime > 0 ? fmtDuration(track.elapsedTime) : null],
+        ['Avg pace', mi > 0 && track.timerTime > 0 ? fmtPace(track.timerTime / mi) : null],
+        ['Avg heart rate', track.avgHeartRate > 0 ? track.avgHeartRate + ' bpm' : null],
+        ['Max heart rate', track.maxHeartRate > 0 ? track.maxHeartRate + ' bpm' : null],
+        ['Elevation gain', track.ascent > 0 ? Math.round(track.ascent * KM_TO_FT).toLocaleString() + ' ft' : null],
+        ['Elevation loss', track.descent > 0 ? Math.round(track.descent * KM_TO_FT).toLocaleString() + ' ft' : null],
+        ['Calories', track.calories > 0 ? track.calories.toLocaleString() + ' kcal' : null],
+      ];
+      detailEl.querySelector('.d-title').textContent = track.name;
+      const grid = detailEl.querySelector('.d-grid');
+      grid.textContent = '';
+      for (const [label, value] of rows) {
+        if (value == null) continue;
+        const cell = document.createElement('div');
+        const l = document.createElement('div');
+        l.className = 'd-label';
+        l.textContent = label;
+        const v = document.createElement('div');
+        v.className = 'd-value';
+        v.textContent = value;
+        cell.append(l, v);
+        grid.appendChild(cell);
+      }
+      detailEl.style.display = 'block';
+    }
+    function hideDetail() { detailEl.style.display = 'none'; }
+    detailEl.querySelector('.d-close').addEventListener('click', hideDetail);
 
     // ---- Sorting ----
     const SORTERS = {
@@ -401,6 +584,7 @@ function buildHTML(tracks: Track[]): string {
         else { p.addTo(map); p.setStyle({ weight: 2.5, opacity: 0.9 }); }
       });
       if (activeItem) { activeItem.classList.remove('active'); activeItem = null; }
+      hideDetail();
       if (heat) renderHeat();
     }
     document.getElementById('btn-tracks').addEventListener('click', () => setMode(false));
@@ -435,20 +619,41 @@ async function main(): Promise<void> {
   console.log(`Parsing ${fitFiles.length} .fit file(s)...`);
 
   const names = loadNames(folder);
+  const cache = loadCache(folder);
+  const nextCache: Cache = { version: CACHE_VERSION, entries: {} };
+  let cacheHits = 0;
   const tracks: Track[] = [];
   for (const file of fitFiles) {
     const filePath = path.join(folder, file);
     try {
-      const parsed = await parseFitFile(filePath);
+      const stat = fs.statSync(filePath);
+      const hit = cache.entries[file];
+      let parsed: ParsedTrack;
+      if (hit && hit.mtimeMs === stat.mtimeMs && hit.size === stat.size) {
+        parsed = hit.parsed;
+        cacheHits++;
+      } else {
+        parsed = await parseFitFile(filePath);
+      }
+      nextCache.entries[file] = { mtimeMs: stat.mtimeMs, size: stat.size, parsed };
       const label = parsed.points.length > 0 ? `${parsed.points.length} GPS points` : 'no GPS data';
-      console.log(`  ${parsed.points.length > 0 ? '✓' : '–'} ${file}: ${label}`);
+      if (hit?.parsed !== parsed) console.log(`  ${parsed.points.length > 0 ? '✓' : '–'} ${file}: ${label}`);
       if (parsed.points.length > 0) {
         const startTime = parsed.session?.start_time ? new Date(parsed.session.start_time).getTime() : NaN;
         tracks.push({
-          name: formatTrackName(parsed.session, file, names[path.basename(file, '.fit')]),
+          ...formatTrackName(parsed.session, file, names[path.basename(file, '.fit')]),
           id: file,
           startTime: Number.isNaN(startTime) ? 0 : startTime,
           distance: parsed.session?.total_distance ?? 0,
+          timerTime: parsed.session?.total_timer_time ?? 0,
+          elapsedTime: parsed.session?.total_elapsed_time ?? 0,
+          avgHeartRate: parsed.session?.avg_heart_rate ?? 0,
+          maxHeartRate: parsed.session?.max_heart_rate ?? 0,
+          // fit-file-parser reports ascent/descent in km (lengthUnit)
+          ascent: parsed.session?.total_ascent ?? 0,
+          descent: parsed.session?.total_descent ?? 0,
+          calories: parsed.session?.total_calories ?? 0,
+          maxSpeed: parsed.session?.max_speed ?? 0,
           points: parsed.points,
         });
       }
@@ -457,9 +662,17 @@ async function main(): Promise<void> {
     }
   }
 
+  saveCache(folder, nextCache);
+  if (cacheHits > 0) console.log(`  (${cacheHits} file(s) loaded from cache)`);
+
   const html = buildHTML(tracks);
 
-  const server = http.createServer((_req, res) => {
+  const server = http.createServer((req, res) => {
+    if (req.url === '/__reload') {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+      res.write(': connected\n\n');
+      return;
+    }
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(html);
   });
