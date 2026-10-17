@@ -6,6 +6,10 @@ import FitParser from 'fit-file-parser';
 interface TrackPoint {
   lat: number;
   lon: number;
+  /** cumulative distance in km */
+  d?: number;
+  /** altitude in km */
+  a?: number;
 }
 
 interface Track {
@@ -49,6 +53,13 @@ interface FitSession {
   max_speed?: number;
 }
 
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const rad = Math.PI / 180;
+  const h = Math.sin(((lat2 - lat1) * rad) / 2) ** 2
+    + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(((lon2 - lon1) * rad) / 2) ** 2;
+  return 12742 * Math.asin(Math.sqrt(h));
+}
+
 function parseFitFile(filePath: string): Promise<ParsedTrack> {
   return new Promise((resolve, reject) => {
     const buffer = fs.readFileSync(filePath);
@@ -66,9 +77,19 @@ function parseFitFile(filePath: string): Promise<ParsedTrack> {
         reject(error);
         return;
       }
-      const points: TrackPoint[] = (data.records ?? [])
-        .filter(r => r.position_lat != null && r.position_long != null)
-        .map(r => ({ lat: r.position_lat as number, lon: r.position_long as number }));
+      const points: TrackPoint[] = [];
+      let cum = 0;
+      for (const r of data.records ?? []) {
+        if (r.position_lat == null || r.position_long == null) continue;
+        const lat = r.position_lat as number, lon = r.position_long as number;
+        const prev = points[points.length - 1];
+        if (typeof r.distance === 'number') cum = r.distance;
+        else if (prev) cum += haversineKm(prev.lat, prev.lon, lat, lon);
+        const alt = typeof r.enhanced_altitude === 'number' ? r.enhanced_altitude : r.altitude;
+        const pt: TrackPoint = { lat, lon, d: Math.round(cum * 1e4) / 1e4 };
+        if (typeof alt === 'number') pt.a = Math.round(alt * 1e4) / 1e4;
+        points.push(pt);
+      }
       const sessions = data.sessions as FitSession[] | undefined;
       resolve({ points, session: slimSession(sessions?.[0]) });
     });
@@ -76,7 +97,7 @@ function parseFitFile(filePath: string): Promise<ParsedTrack> {
 }
 
 const CACHE_FILE = '.tracktint-cache.json';
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
 
 interface CacheEntry {
   mtimeMs: number;
@@ -312,6 +333,28 @@ function buildHTML(tracks: Track[]): string {
     #detail .d-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
     #detail .d-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px; color: #888; }
     #detail .d-value { font-size: 16px; font-weight: 600; margin-top: 2px; }
+    #detail .d-chart { display: inline-flex; margin-top: 8px; align-items: center; gap: 6px; background: #2a2d36; border: 1px solid #3a3e4a; border-radius: 6px; color: #e6e6e6; font-size: 12px; line-height: 1; cursor: pointer; padding: 6px 10px; white-space: nowrap; }
+    #detail .d-chart:hover { border-color: #7B2CBF; }
+    #detail .d-chart.on { background: #7B2CBF; border-color: #7B2CBF; color: #fff; }
+    #chart {
+      display: none;
+      position: absolute;
+      left: 12px;
+      right: 304px;
+      bottom: 12px;
+      height: 170px;
+      z-index: 1000;
+      background: rgba(20, 22, 28, 0.95);
+      border-radius: 10px;
+      box-shadow: 0 2px 16px rgba(0, 0, 0, 0.5);
+      color: #e6e6e6;
+    }
+    #chart { flex-direction: column; }
+    #chart .c-stats { display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 8px 14px 0; font-size: 11px; color: #888; white-space: nowrap; }
+    #chart .c-stats b { color: #e6e6e6; font-weight: 600; margin-left: 4px; }
+    #chart .c-stats .up b { color: #6fcf97; }
+    #chart .c-stats .down b { color: #eb7b7b; }
+    #chart canvas { flex: 1; min-height: 0; width: 100%; display: block; }
     #empty-msg {
       font-size: 13px;
       color: #999;
@@ -324,9 +367,9 @@ function buildHTML(tracks: Track[]): string {
   <div id="panel">
     <div class="panel-header">
       <div class="unit-row">
-        <span id="u-mi">mi</span>
-        <button id="unit-switch" class="switch" role="switch" aria-label="Use kilometers" aria-checked="false"></button>
-        <span id="u-km">km</span>
+        <span id="u-mi" title="Miles, feet">Imperial</span>
+        <button id="unit-switch" class="switch" role="switch" aria-label="Use metric units" aria-checked="false"></button>
+        <span id="u-km" title="Kilometers, meters">Metric</span>
       </div>
       <div class="mode-toggle">
         <button id="btn-tracks" class="on">Tracks</button>
@@ -350,11 +393,13 @@ function buildHTML(tracks: Track[]): string {
       <div class="d-titles">
         <div class="d-title"></div>
         <div class="d-date"></div>
+        <button class="d-chart" title="Elevation profile"><i class="fa-solid fa-chart-area"></i> Elevation</button>
       </div>
       <button class="d-close" title="Close">&times;</button>
     </div>
     <div class="d-grid"></div>
   </div>
+  <div id="chart"><div class="c-stats"></div><canvas></canvas></div>
   <script>
     // Live reload: server restarts (tsx watch) drop the stream; reload once it's back.
     (function () {
@@ -522,9 +567,122 @@ function buildHTML(tracks: Track[]): string {
         grid.appendChild(cell);
       }
       detailEl.style.display = 'block';
+      chartBtn.style.display = elevSeries(track).length > 1 ? '' : 'none';
+      drawChart();
     }
-    function hideDetail() { detailEl.style.display = 'none'; detailTrack = null; }
+    function hideDetail() { detailEl.style.display = 'none'; detailTrack = null; drawChart(); }
     detailEl.querySelector('.d-close').addEventListener('click', hideDetail);
+
+    // ---- Elevation profile ----
+    const chartEl = document.getElementById('chart');
+    const chartCanvas = chartEl.querySelector('canvas');
+    const chartBtn = detailEl.querySelector('.d-chart');
+    const hoverMarker = L.circleMarker([0, 0], { radius: 6, color: '#fff', weight: 2, fillColor: '#7B2CBF', fillOpacity: 1, interactive: false });
+    let chartOn = false;
+    let chartGeom = null;
+
+    function elevSeries(track) {
+      if (track._elev) return track._elev;
+      track._elev = track.points.filter(p => p.a != null && p.d != null);
+      return track._elev;
+    }
+
+    function drawChart(hoverIdx) {
+      const track = detailTrack;
+      const series = track ? elevSeries(track) : [];
+      const show = chartOn && series.length > 1;
+      chartBtn.classList.toggle('on', chartOn);
+      chartEl.style.display = show ? 'flex' : 'none';
+      if (!show) { chartGeom = null; map.removeLayer(hoverMarker); return; }
+
+      const dpr = window.devicePixelRatio || 1;
+      const W = chartCanvas.clientWidth, H = chartCanvas.clientHeight;
+      chartCanvas.width = W * dpr;
+      chartCanvas.height = H * dpr;
+      const ctx = chartCanvas.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+
+      const dMul = isMi() ? KM_TO_MI : 1, aMul = isMi() ? KM_TO_FT : KM_TO_M;
+      const xs = series.map(p => p.d * dMul), ys = series.map(p => p.a * aMul);
+      let yMin = Infinity, yMax = -Infinity;
+      for (const y of ys) { if (y < yMin) yMin = y; if (y > yMax) yMax = y; }
+      const eu = isMi() ? ' ft' : ' m', fmtE = v => Math.round(v).toLocaleString() + eu;
+      const gain = track.ascent > 0 ? track.ascent * aMul : null, loss = track.descent > 0 ? track.descent * aMul : null;
+      const stat = (cls, label, v) => '<span class="' + cls + '">' + label + '<b>' + v + '</b></span>';
+      chartEl.querySelector('.c-stats').innerHTML =
+        stat('', 'Max', fmtE(yMax)) + stat('', 'Min', fmtE(yMin)) +
+        (gain != null ? stat('up', 'Gain', '+' + fmtE(gain)) : '') +
+        (loss != null ? stat('down', 'Loss', '&minus;' + fmtE(loss)) : '');
+      const pad = Math.max((yMax - yMin) * 0.1, 1);
+      yMin -= pad; yMax += pad;
+      const xMin = xs[0], xMax = xs[xs.length - 1] || 1;
+      const L_ = 52, R_ = 14, T_ = 14, B_ = 24;
+      const px = x => L_ + ((x - xMin) / (xMax - xMin || 1)) * (W - L_ - R_);
+      const py = y => T_ + (1 - (y - yMin) / (yMax - yMin)) * (H - T_ - B_);
+      chartGeom = { xs, ys, series, px, L_, R_, W };
+
+      ctx.font = '10px -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.fillStyle = '#888';
+      ctx.strokeStyle = '#2a2d36';
+      ctx.lineWidth = 1;
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'right';
+      for (let i = 0; i <= 3; i++) {
+        const v = yMin + ((yMax - yMin) * i) / 3, y = py(v);
+        ctx.beginPath(); ctx.moveTo(L_, y); ctx.lineTo(W - R_, y); ctx.stroke();
+        ctx.fillText(Math.round(v).toLocaleString() + (isMi() ? ' ft' : ' m'), L_ - 6, y);
+      }
+      ctx.textBaseline = 'top';
+      ctx.textAlign = 'center';
+      for (let i = 0; i <= 4; i++) {
+        const v = xMin + ((xMax - xMin) * i) / 4;
+        ctx.fillText(v.toFixed(1) + ' ' + units, px(v), H - B_ + 6);
+      }
+
+      ctx.beginPath();
+      xs.forEach((x, i) => { if (i === 0) ctx.moveTo(px(x), py(ys[i])); else ctx.lineTo(px(x), py(ys[i])); });
+      ctx.strokeStyle = '#B57BEE';
+      ctx.lineWidth = 2;
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+      ctx.lineTo(px(xMax), H - B_);
+      ctx.lineTo(px(xMin), H - B_);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(123, 44, 191, 0.3)';
+      ctx.fill();
+
+      if (hoverIdx != null) {
+        const x = px(xs[hoverIdx]), y = py(ys[hoverIdx]);
+        ctx.strokeStyle = '#aaa';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x, T_); ctx.lineTo(x, H - B_); ctx.stroke();
+        ctx.fillStyle = '#fff';
+        ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill();
+        const label = xs[hoverIdx].toFixed(2) + ' ' + units + ' · ' + Math.round(ys[hoverIdx]).toLocaleString() + (isMi() ? ' ft' : ' m');
+        ctx.font = '11px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.textBaseline = 'top';
+        ctx.textAlign = x > W / 2 ? 'right' : 'left';
+        ctx.fillStyle = '#e6e6e6';
+        ctx.fillText(label, x + (x > W / 2 ? -8 : 8), T_ + 2);
+        hoverMarker.setLatLng([series[hoverIdx].lat, series[hoverIdx].lon]).addTo(map);
+      } else {
+        map.removeLayer(hoverMarker);
+      }
+    }
+
+    chartCanvas.addEventListener('mousemove', e => {
+      if (!chartGeom) return;
+      const x = e.clientX - chartCanvas.getBoundingClientRect().left;
+      const { xs, px } = chartGeom;
+      let lo = 0, hi = xs.length - 1;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (px(xs[mid]) < x) lo = mid + 1; else hi = mid; }
+      if (lo > 0 && Math.abs(px(xs[lo - 1]) - x) < Math.abs(px(xs[lo]) - x)) lo--;
+      drawChart(lo);
+    });
+    chartCanvas.addEventListener('mouseleave', () => drawChart());
+    chartBtn.addEventListener('click', () => { chartOn = !chartOn; drawChart(); });
+    window.addEventListener('resize', () => drawChart());
 
     // ---- Unit toggle ----
     const unitBtn = document.getElementById('unit-switch');
