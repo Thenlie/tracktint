@@ -12,6 +12,7 @@ interface Track {
   name: string;
   title: string;
   subtitle: string;
+  sport: string;
   id: string;
   startTime: number;
   distance: number;
@@ -34,6 +35,7 @@ interface ParsedTrack {
 interface FitSession {
   start_time?: string | Date;
   sport?: string;
+  sub_sport?: string;
   total_distance?: number;
   total_timer_time?: number;
   total_elapsed_time?: number;
@@ -72,7 +74,7 @@ function parseFitFile(filePath: string): Promise<ParsedTrack> {
 }
 
 const CACHE_FILE = '.tracktint-cache.json';
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 2;
 
 interface CacheEntry {
   mtimeMs: number;
@@ -108,6 +110,7 @@ function slimSession(s: FitSession | undefined): FitSession | undefined {
   return {
     start_time: s.start_time,
     sport: s.sport,
+    sub_sport: s.sub_sport,
     total_distance: s.total_distance,
     total_timer_time: s.total_timer_time,
     total_elapsed_time: s.total_elapsed_time,
@@ -146,9 +149,6 @@ function formatTrackName(
       }));
     }
   }
-  if (session.sport) {
-    parts.push(session.sport.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()));
-  }
   if (typeof session.total_timer_time === 'number' && session.total_timer_time > 0) {
     const minutes = Math.round(session.total_timer_time / 60);
     const hours = Math.floor(minutes / 60);
@@ -178,6 +178,7 @@ function buildHTML(tracks: Track[]): string {
   <title>FIT Map Viewer</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="" />
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
@@ -243,10 +244,11 @@ function buildHTML(tracks: Track[]): string {
     #legend .labels { display: flex; justify-content: space-between; font-size: 10px; color: #999; margin-top: 3px; }
     .heat-canvas { position: absolute; top: 0; left: 0; pointer-events: none; }
     .swatch {
-      width: 24px;
-      height: 4px;
-      border-radius: 3px;
+      width: 22px;
       flex-shrink: 0;
+      text-align: center;
+      font-size: 17px;
+      color: #fff;
     }
     .track-text { flex: 1; min-width: 0; }
     .track-name {
@@ -341,6 +343,26 @@ function buildHTML(tracks: Track[]): string {
     const COLORS = ${colorsJson};
     const tracks = ${tracksJson};
 
+    const SPORT_ICONS = {
+      running: 'person-running',
+      trail_running: 'mountain',
+      cycling: 'person-biking',
+      e_biking: 'person-biking',
+      walking: 'person-walking',
+      hiking: 'person-hiking',
+      swimming: 'person-swimming',
+      alpine_skiing: 'person-skiing',
+      cross_country_skiing: 'person-skiing-nordic',
+      snowboarding: 'person-snowboarding',
+      training: 'dumbbell',
+    };
+    function sportIcon(sport) {
+      const el = document.createElement('i');
+      el.className = 'swatch fa-solid fa-' + (SPORT_ICONS[sport] || 'location-dot');
+      el.title = (sport || 'activity').replace(/_/g, ' ');
+      return el;
+    }
+
     const map = L.map('map', { preferCanvas: true });
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a> contributors',
@@ -378,9 +400,7 @@ function buildHTML(tracks: Track[]): string {
       const item = document.createElement('div');
       item.className = 'track-item';
       item.title = track.id;
-      const swatch = document.createElement('div');
-      swatch.className = 'swatch';
-      swatch.style.background = color;
+      const swatch = sportIcon(track.sport);
       const name = document.createElement('span');
       name.className = 'track-name';
       name.textContent = track.title;
@@ -642,6 +662,9 @@ async function main(): Promise<void> {
         const startTime = parsed.session?.start_time ? new Date(parsed.session.start_time).getTime() : NaN;
         tracks.push({
           ...formatTrackName(parsed.session, file, names[path.basename(file, '.fit')]),
+          sport: parsed.session?.sub_sport === 'trail' && parsed.session.sport === 'running'
+            ? 'trail_running'
+            : parsed.session?.sport ?? '',
           id: file,
           startTime: Number.isNaN(startTime) ? 0 : startTime,
           distance: parsed.session?.total_distance ?? 0,
