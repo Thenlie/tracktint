@@ -205,6 +205,7 @@ function buildHTML(tracks: Track[]): string {
       width: 280px;
       max-height: calc(100vh - 24px);
       overflow-y: auto;
+      overflow-x: hidden;
     }
     #panel h2 {
       font-size: 11px;
@@ -262,6 +263,7 @@ function buildHTML(tracks: Track[]): string {
     }
     .track-text { flex: 1; min-width: 0; }
     .track-name {
+      display: block;
       font-size: 12px;
       color: #e6e6e6;
       white-space: nowrap;
@@ -297,7 +299,7 @@ function buildHTML(tracks: Track[]): string {
     }
     #detail .d-head { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid #3a3e4a; }
     #detail .d-titles { flex: 1; min-width: 0; }
-    #detail .d-title { font-size: 16px; font-weight: 600; line-height: 1.3; }
+    #detail .d-title { font-size: 16px; font-weight: 600; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     #detail .d-date { font-size: 11px; color: #888; margin-top: 2px; }
     #detail .d-close { background: none; border: none; color: #888; font-size: 18px; line-height: 1; cursor: pointer; }
     #detail .d-close:hover { color: #fff; }
