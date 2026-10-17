@@ -249,6 +249,12 @@ function buildHTML(tracks: Track[]): string {
       cursor: pointer;
     }
     .sort-bar button { font-size: 11px; }
+    .unit-row { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 8px; font-size: 12px; color: #888; }
+    .unit-row span.on { color: #fff; font-weight: 600; }
+    .switch { position: relative; width: 38px; height: 20px; padding: 0; border: none; border-radius: 10px; background: #3a3e4a; cursor: pointer; transition: background 0.15s; }
+    .switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform 0.15s; }
+    .switch[aria-checked="true"] { background: #7B2CBF; }
+    .switch[aria-checked="true"]::after { transform: translateX(18px); }
     .mode-toggle button.on, .sort-bar button.on { background: #7B2CBF; color: #fff; border-color: #7B2CBF; }
     #legend { display: none; margin-bottom: 8px; }
     #legend .bar { height: 8px; border-radius: 4px; background: linear-gradient(to right, hsl(275,100%,50%), hsl(240,100%,50%), hsl(180,100%,50%), hsl(120,100%,50%), hsl(60,100%,50%), hsl(30,100%,50%), hsl(0,100%,50%)); }
@@ -317,6 +323,11 @@ function buildHTML(tracks: Track[]): string {
   <div id="map"></div>
   <div id="panel">
     <div class="panel-header">
+      <div class="unit-row">
+        <span id="u-mi">mi</span>
+        <button id="unit-switch" class="switch" role="switch" aria-label="Use kilometers" aria-checked="false"></button>
+        <span id="u-km">km</span>
+      </div>
       <div class="mode-toggle">
         <button id="btn-tracks" class="on">Tracks</button>
         <button id="btn-heat">Heatmap</button>
@@ -380,6 +391,14 @@ function buildHTML(tracks: Track[]): string {
       return el;
     }
 
+    // ---- Units ----
+    const KM_TO_MI = 0.621371, KM_TO_FT = 3280.84, KM_TO_M = 1000;
+    let units = 'mi';
+    try { if (localStorage.getItem('units') === 'km') units = 'km'; } catch (e) {}
+    const isMi = () => units === 'mi';
+    const fmtDist = km => (km * (isMi() ? KM_TO_MI : 1)).toFixed(1) + ' ' + units;
+    const fmtElev = km => Math.round(km * (isMi() ? KM_TO_FT : KM_TO_M)).toLocaleString() + (isMi() ? ' ft' : ' m');
+
     const map = L.map('map', { preferCanvas: true });
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a> contributors',
@@ -390,6 +409,8 @@ function buildHTML(tracks: Track[]): string {
     const allLatLngs = [];
     const polylines = [];
     const items = [];
+    const distEls = [];
+    let detailTrack = null;
     let activeItem = null;
     let heatOn = false;
 
@@ -432,8 +453,9 @@ function buildHTML(tracks: Track[]): string {
       }
       const pointCount = document.createElement('span');
       pointCount.className = 'track-pts';
-      pointCount.textContent = track.distance > 0 ? (track.distance * 0.621371).toFixed(1) + ' mi' : '';
+      pointCount.textContent = track.distance > 0 ? fmtDist(track.distance) : '';
       item.append(swatch, text, pointCount);
+      distEls.push({ el: pointCount, track });
 
       function selectTrack() {
         if (activeItem) activeItem.classList.remove('active');
@@ -458,28 +480,27 @@ function buildHTML(tracks: Track[]): string {
 
     // ---- Detail dialog ----
     const detailEl = document.getElementById('detail');
-    const KM_TO_MI = 0.621371, KM_TO_FT = 3280.84;
-
     function fmtDuration(sec) {
       const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = Math.round(sec % 60);
       return h > 0 ? h + 'h ' + String(m).padStart(2, '0') + 'm' : m + 'm ' + String(s).padStart(2, '0') + 's';
     }
-    function fmtPace(secPerMi) {
-      const m = Math.floor(secPerMi / 60), s = Math.round(secPerMi % 60);
-      return m + ':' + String(s).padStart(2, '0') + ' /mi';
+    function fmtPace(secPerUnit) {
+      const m = Math.floor(secPerUnit / 60), s = Math.round(secPerUnit % 60);
+      return m + ':' + String(s).padStart(2, '0') + ' /' + units;
     }
 
     function showDetail(track) {
-      const mi = track.distance * KM_TO_MI;
+      detailTrack = track;
+      const dist = track.distance * (isMi() ? KM_TO_MI : 1);
       const rows = [
-        ['Distance', mi > 0 ? mi.toFixed(2) + ' mi' : null],
+        ['Distance', dist > 0 ? dist.toFixed(2) + ' ' + units : null],
         ['Moving time', track.timerTime > 0 ? fmtDuration(track.timerTime) : null],
         ['Elapsed time', track.elapsedTime > 0 ? fmtDuration(track.elapsedTime) : null],
-        ['Avg pace', mi > 0 && track.timerTime > 0 ? fmtPace(track.timerTime / mi) : null],
+        ['Avg pace', dist > 0 && track.timerTime > 0 ? fmtPace(track.timerTime / dist) : null],
         ['Avg heart rate', track.avgHeartRate > 0 ? track.avgHeartRate + ' bpm' : null],
         ['Max heart rate', track.maxHeartRate > 0 ? track.maxHeartRate + ' bpm' : null],
-        ['Elevation gain', track.ascent > 0 ? Math.round(track.ascent * KM_TO_FT).toLocaleString() + ' ft' : null],
-        ['Elevation loss', track.descent > 0 ? Math.round(track.descent * KM_TO_FT).toLocaleString() + ' ft' : null],
+        ['Elevation gain', track.ascent > 0 ? fmtElev(track.ascent) : null],
+        ['Elevation loss', track.descent > 0 ? fmtElev(track.descent) : null],
         ['Calories', track.calories > 0 ? track.calories.toLocaleString() + ' kcal' : null],
       ];
       detailEl.querySelector('.d-title').textContent = track.label || track.date || track.name;
@@ -502,8 +523,24 @@ function buildHTML(tracks: Track[]): string {
       }
       detailEl.style.display = 'block';
     }
-    function hideDetail() { detailEl.style.display = 'none'; }
+    function hideDetail() { detailEl.style.display = 'none'; detailTrack = null; }
     detailEl.querySelector('.d-close').addEventListener('click', hideDetail);
+
+    // ---- Unit toggle ----
+    const unitBtn = document.getElementById('unit-switch');
+    function applyUnits() {
+      unitBtn.setAttribute('aria-checked', String(!isMi()));
+      document.getElementById('u-mi').classList.toggle('on', isMi());
+      document.getElementById('u-km').classList.toggle('on', !isMi());
+      distEls.forEach(({ el, track }) => { el.textContent = track.distance > 0 ? fmtDist(track.distance) : ''; });
+      if (detailTrack) showDetail(detailTrack);
+    }
+    unitBtn.addEventListener('click', () => {
+      units = isMi() ? 'km' : 'mi';
+      try { localStorage.setItem('units', units); } catch (e) {}
+      applyUnits();
+    });
+    applyUnits();
 
     // ---- Sorting ----
     const SORTERS = {
