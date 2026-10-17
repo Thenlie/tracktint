@@ -707,7 +707,7 @@ function buildHTML(tracks: Track[]): string {
       date: (a, b) => a.startTime - b.startTime,
     };
     const SORT_LABELS = { name: 'Name', distance: 'Distance', date: 'Date' };
-    const sortState = { key: null, dir: 'asc' };
+    const sortState = { key: 'date', dir: 'desc' };
 
     function applySort() {
       const cmp = SORTERS[sortState.key];
@@ -729,6 +729,7 @@ function buildHTML(tracks: Track[]): string {
         applySort();
       });
     });
+    applySort();
 
     if (allLatLngs.length > 0) {
       map.fitBounds(allLatLngs, { padding: [30, 30] });
