@@ -12,6 +12,8 @@ interface Track {
   name: string;
   title: string;
   subtitle: string;
+  label: string;
+  date: string;
   sport: string;
   id: string;
   startTime: number;
@@ -133,31 +135,39 @@ function formatTrackName(
   session: FitSession | undefined,
   fallback: string,
   activityName?: string,
-): { name: string; title: string; subtitle: string } {
+): { name: string; title: string; subtitle: string; label: string; date: string } {
   if (!session) {
     const n = activityName ?? fallback;
-    return { name: n, title: n, subtitle: '' };
+    return { name: n, title: n, subtitle: '', label: n, date: '' };
   }
 
   const parts: string[] = [];
+  let duration = '';
+  let date = '';
   if (activityName) parts.push(activityName);
   if (session.start_time) {
     const start = new Date(session.start_time);
     if (!Number.isNaN(start.getTime())) {
-      parts.push(start.toLocaleString(undefined, {
+      date = start.toLocaleString(undefined, {
         month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
-      }));
+      });
+      parts.push(date);
     }
   }
   if (typeof session.total_timer_time === 'number' && session.total_timer_time > 0) {
     const minutes = Math.round(session.total_timer_time / 60);
     const hours = Math.floor(minutes / 60);
     const remainingMinutes = minutes % 60;
-    parts.push(hours > 0 ? `${hours}h ${remainingMinutes}m` : `${minutes} min`);
+    duration = hours > 0 ? `${hours}h ${remainingMinutes}m` : `${minutes} min`;
   }
 
-  if (parts.length === 0) return { name: fallback, title: fallback, subtitle: '' };
-  return { name: parts.join(' · '), title: parts[0], subtitle: parts.slice(1).join(' · ') };
+  if (parts.length === 0 && !duration) return { name: fallback, title: fallback, subtitle: '', label: fallback, date: '' };
+  const name = parts.join(' · ') || fallback;
+  const all = duration ? [...parts, duration] : parts;
+  return {
+    name, title: all[0], subtitle: all.slice(1).join(' · '),
+    label: activityName ?? '', date,
+  };
 }
 
 function buildHTML(tracks: Track[]): string {
@@ -192,7 +202,7 @@ function buildHTML(tracks: Track[]): string {
       border-radius: 10px;
       box-shadow: 0 2px 16px rgba(0, 0, 0, 0.5);
       padding: 0 16px 14px;
-      max-width: 280px;
+      width: 280px;
       max-height: calc(100vh - 24px);
       overflow-y: auto;
     }
@@ -274,19 +284,21 @@ function buildHTML(tracks: Track[]): string {
     #detail {
       display: none;
       position: absolute;
-      left: 12px;
-      bottom: 28px;
+      top: 12px;
+      right: 304px;
       z-index: 1000;
       width: 300px;
-      max-width: calc(100vw - 24px);
+      max-width: calc(100vw - 316px);
       background: rgba(20, 22, 28, 0.95);
       border-radius: 10px;
       box-shadow: 0 2px 16px rgba(0, 0, 0, 0.5);
       padding: 14px 16px 16px;
       color: #e6e6e6;
     }
-    #detail .d-head { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 12px; }
-    #detail .d-title { flex: 1; font-size: 13px; font-weight: 600; line-height: 1.35; }
+    #detail .d-head { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid #3a3e4a; }
+    #detail .d-titles { flex: 1; min-width: 0; }
+    #detail .d-title { font-size: 16px; font-weight: 600; line-height: 1.3; }
+    #detail .d-date { font-size: 11px; color: #888; margin-top: 2px; }
     #detail .d-close { background: none; border: none; color: #888; font-size: 18px; line-height: 1; cursor: pointer; }
     #detail .d-close:hover { color: #fff; }
     #detail .d-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
@@ -322,7 +334,10 @@ function buildHTML(tracks: Track[]): string {
   </div>
   <div id="detail">
     <div class="d-head">
-      <div class="d-title"></div>
+      <div class="d-titles">
+        <div class="d-title"></div>
+        <div class="d-date"></div>
+      </div>
       <button class="d-close" title="Close">&times;</button>
     </div>
     <div class="d-grid"></div>
@@ -465,7 +480,10 @@ function buildHTML(tracks: Track[]): string {
         ['Elevation loss', track.descent > 0 ? Math.round(track.descent * KM_TO_FT).toLocaleString() + ' ft' : null],
         ['Calories', track.calories > 0 ? track.calories.toLocaleString() + ' kcal' : null],
       ];
-      detailEl.querySelector('.d-title').textContent = track.name;
+      detailEl.querySelector('.d-title').textContent = track.label || track.date || track.name;
+      const dateEl = detailEl.querySelector('.d-date');
+      dateEl.textContent = track.label ? track.date : '';
+      dateEl.style.display = track.label && track.date ? 'block' : 'none';
       const grid = detailEl.querySelector('.d-grid');
       grid.textContent = '';
       for (const [label, value] of rows) {
