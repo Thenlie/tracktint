@@ -5,7 +5,8 @@
   "scripts": {
     "start": "tsc --noEmit && tsx --tsconfig tsconfig.json src/index.ts",
     "build": "tsc",
-    "run:dist": "node dist/index.js"
+    "run:dist": "node dist/index.js",
+    "fetch-names": "tsc --noEmit && tsx --tsconfig tsconfig.json src/fetch-names.ts"
   },
   "dependencies": {
     "fit-file-parser": "^1.9.8"

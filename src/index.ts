@@ -11,6 +11,8 @@ interface TrackPoint {
 interface Track {
   name: string;
   id: string;
+  startTime: number;
+  distance: number;
   points: TrackPoint[];
 }
 
@@ -52,10 +54,17 @@ function parseFitFile(filePath: string): Promise<ParsedTrack> {
   });
 }
 
-function formatTrackName(session: FitSession | undefined, fallback: string): string {
-  if (!session) return fallback;
+function loadNames(folder: string): Record<string, string> {
+  const namesFile = path.join(folder, 'names.json');
+  if (!fs.existsSync(namesFile)) return {};
+  return JSON.parse(fs.readFileSync(namesFile, 'utf8')) as Record<string, string>;
+}
+
+function formatTrackName(session: FitSession | undefined, fallback: string, activityName?: string): string {
+  if (!session) return activityName ?? fallback;
 
   const parts: string[] = [];
+  if (activityName) parts.push(activityName);
   if (session.start_time) {
     const start = new Date(session.start_time);
     if (!Number.isNaN(start.getTime())) {
@@ -66,9 +75,6 @@ function formatTrackName(session: FitSession | undefined, fallback: string): str
   }
   if (session.sport) {
     parts.push(session.sport.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()));
-  }
-  if (typeof session.total_distance === 'number' && session.total_distance > 0) {
-    parts.push(`${session.total_distance.toFixed(1)} km`);
   }
   if (typeof session.total_timer_time === 'number' && session.total_timer_time > 0) {
     const minutes = Math.round(session.total_timer_time / 60);
@@ -110,7 +116,7 @@ function buildHTML(tracks: Track[]): string {
       background: rgba(20, 22, 28, 0.92);
       border-radius: 10px;
       box-shadow: 0 2px 16px rgba(0, 0, 0, 0.5);
-      padding: 14px 16px;
+      padding: 0 16px 14px;
       max-width: 280px;
       max-height: calc(100vh - 24px);
       overflow-y: auto;
@@ -137,8 +143,16 @@ function buildHTML(tracks: Track[]): string {
     /* darken OSM tiles: invert to dark, mute colors */
     .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) grayscale(0.7) brightness(0.75) contrast(0.9); }
     #map { background: #14161c; }
-    .mode-toggle { display: flex; gap: 4px; margin-bottom: 12px; }
-    .mode-toggle button {
+    .panel-header {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #14161c;
+      padding: 14px 0 0;
+      margin-bottom: 4px;
+    }
+    .mode-toggle, .sort-bar { display: flex; gap: 4px; margin-bottom: 8px; }
+    .mode-toggle button, .sort-bar button {
       flex: 1;
       padding: 6px 0;
       font-size: 12px;
@@ -148,8 +162,9 @@ function buildHTML(tracks: Track[]): string {
       border-radius: 6px;
       cursor: pointer;
     }
-    .mode-toggle button.on { background: #7B2CBF; color: #fff; border-color: #7B2CBF; }
-    #legend { display: none; margin-bottom: 12px; }
+    .sort-bar button { font-size: 11px; }
+    .mode-toggle button.on, .sort-bar button.on { background: #7B2CBF; color: #fff; border-color: #7B2CBF; }
+    #legend { display: none; margin-bottom: 8px; }
     #legend .bar { height: 8px; border-radius: 4px; background: linear-gradient(to right, hsl(275,100%,50%), hsl(240,100%,50%), hsl(180,100%,50%), hsl(120,100%,50%), hsl(60,100%,50%), hsl(30,100%,50%), hsl(0,100%,50%)); }
     #legend .labels { display: flex; justify-content: space-between; font-size: 10px; color: #999; margin-top: 3px; }
     .heat-canvas { position: absolute; top: 0; left: 0; pointer-events: none; }
@@ -182,13 +197,20 @@ function buildHTML(tracks: Track[]): string {
 <body>
   <div id="map"></div>
   <div id="panel">
-    <div class="mode-toggle">
-      <button id="btn-tracks" class="on">Tracks</button>
-      <button id="btn-heat">Heatmap</button>
-    </div>
-    <div id="legend">
-      <div class="bar"></div>
-      <div class="labels"><span>1 pass</span><span>many</span></div>
+    <div class="panel-header">
+      <div class="mode-toggle">
+        <button id="btn-tracks" class="on">Tracks</button>
+        <button id="btn-heat">Heatmap</button>
+      </div>
+      <div class="sort-bar">
+        <button data-sort="name">Name</button>
+        <button data-sort="distance">Distance</button>
+        <button data-sort="date">Date</button>
+      </div>
+      <div id="legend">
+        <div class="bar"></div>
+        <div class="labels"><span>1 pass</span><span>many</span></div>
+      </div>
     </div>
     <h2>GPS Tracks</h2>
     <div id="track-list"></div>
@@ -206,6 +228,7 @@ function buildHTML(tracks: Track[]): string {
     const trackList = document.getElementById('track-list');
     const allLatLngs = [];
     const polylines = [];
+    const items = [];
     let activeItem = null;
     let heatOn = false;
 
@@ -241,7 +264,7 @@ function buildHTML(tracks: Track[]): string {
       name.textContent = track.name;
       const pointCount = document.createElement('span');
       pointCount.className = 'track-pts';
-      pointCount.textContent = track.points.length.toLocaleString();
+      pointCount.textContent = track.distance > 0 ? (track.distance * 0.621371).toFixed(1) + ' mi' : '';
       item.append(swatch, name, pointCount);
 
       item.addEventListener('click', () => {
@@ -255,7 +278,38 @@ function buildHTML(tracks: Track[]): string {
         map.fitBounds(poly.getBounds(), { padding: [40, 40] });
       });
 
+      items.push({ item, track });
       trackList.appendChild(item);
+    });
+
+    // ---- Sorting ----
+    const SORTERS = {
+      name: (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }),
+      distance: (a, b) => a.distance - b.distance,
+      date: (a, b) => a.startTime - b.startTime,
+    };
+    const SORT_LABELS = { name: 'Name', distance: 'Distance', date: 'Date' };
+    const sortState = { key: null, dir: 'asc' };
+
+    function applySort() {
+      const cmp = SORTERS[sortState.key];
+      const sign = sortState.dir === 'asc' ? 1 : -1;
+      [...items].sort((a, b) => sign * cmp(a.track, b.track))
+        .forEach(({ item }) => trackList.appendChild(item));
+      document.querySelectorAll('.sort-bar button').forEach(btn => {
+        const key = btn.dataset.sort;
+        const on = key === sortState.key;
+        btn.classList.toggle('on', on);
+        btn.textContent = SORT_LABELS[key] + (on ? (sortState.dir === 'asc' ? ' ↑' : ' ↓') : '');
+      });
+    }
+    document.querySelectorAll('.sort-bar button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const key = btn.dataset.sort;
+        if (sortState.key === key) sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+        else { sortState.key = key; sortState.dir = 'asc'; }
+        applySort();
+      });
     });
 
     if (allLatLngs.length > 0) {
@@ -380,6 +434,7 @@ async function main(): Promise<void> {
 
   console.log(`Parsing ${fitFiles.length} .fit file(s)...`);
 
+  const names = loadNames(folder);
   const tracks: Track[] = [];
   for (const file of fitFiles) {
     const filePath = path.join(folder, file);
@@ -388,7 +443,14 @@ async function main(): Promise<void> {
       const label = parsed.points.length > 0 ? `${parsed.points.length} GPS points` : 'no GPS data';
       console.log(`  ${parsed.points.length > 0 ? '✓' : '–'} ${file}: ${label}`);
       if (parsed.points.length > 0) {
-        tracks.push({ name: formatTrackName(parsed.session, file), id: file, points: parsed.points });
+        const startTime = parsed.session?.start_time ? new Date(parsed.session.start_time).getTime() : NaN;
+        tracks.push({
+          name: formatTrackName(parsed.session, file, names[path.basename(file, '.fit')]),
+          id: file,
+          startTime: Number.isNaN(startTime) ? 0 : startTime,
+          distance: parsed.session?.total_distance ?? 0,
+          points: parsed.points,
+        });
       }
     } catch (err) {
       console.error(`  ✗ ${file}: ${err instanceof Error ? err.message : err}`);
