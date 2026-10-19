@@ -1,16 +1,4 @@
-/** One workout, with GPS stripped. Distances/ascent in km, times in seconds. */
-export interface DashActivity {
-  id: string;
-  name: string;
-  sport: string;
-  startTime: number;
-  distance: number;
-  timerTime: number;
-  elapsedTime: number;
-  ascent: number;
-  calories: number;
-  avgHeartRate: number;
-}
+import { DashActivity } from '../types';
 
 export function buildDashboardHTML(activities: DashActivity[]): string {
   const dataJson = JSON.stringify(activities).replace(/</g, '\\u003c');
