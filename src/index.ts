@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as http from 'http';
 import FitParser from 'fit-file-parser';
+import { buildDashboardHTML, DashActivity } from './dashboard';
 
 interface TrackPoint {
   lat: number;
@@ -258,6 +259,8 @@ function buildHTML(tracks: Track[]): string {
       padding: 14px 0 0;
       margin-bottom: 4px;
     }
+    .dash-link { display: block; text-align: center; margin-bottom: 8px; padding: 6px 0; font-size: 12px; color: #ccc; text-decoration: none; background: #2a2d36; border: 1px solid #3a3e4a; border-radius: 6px; }
+    .dash-link:hover { border-color: #7B2CBF; }
     .mode-toggle, .sort-bar { display: flex; gap: 4px; margin-bottom: 8px; }
     .mode-toggle button, .sort-bar button {
       flex: 1;
@@ -366,6 +369,7 @@ function buildHTML(tracks: Track[]): string {
   <div id="map"></div>
   <div id="panel">
     <div class="panel-header">
+      <a href="/dashboard" class="dash-link"><i class="fa-solid fa-chart-column"></i> Dashboard</a>
       <div class="unit-row">
         <span id="u-mi" title="Miles, feet">Imperial</span>
         <button id="unit-switch" class="switch" role="switch" aria-label="Use metric units" aria-checked="false"></button>
@@ -859,6 +863,7 @@ async function main(): Promise<void> {
   const nextCache: Cache = { version: CACHE_VERSION, entries: {} };
   let cacheHits = 0;
   const tracks: Track[] = [];
+  const activities: DashActivity[] = [];
   for (const file of fitFiles) {
     const filePath = path.join(folder, file);
     try {
@@ -874,13 +879,28 @@ async function main(): Promise<void> {
       nextCache.entries[file] = { mtimeMs: stat.mtimeMs, size: stat.size, parsed };
       const label = parsed.points.length > 0 ? `${parsed.points.length} GPS points` : 'no GPS data';
       if (hit?.parsed !== parsed) console.log(`  ${parsed.points.length > 0 ? '✓' : '–'} ${file}: ${label}`);
+      const startTime = parsed.session?.start_time ? new Date(parsed.session.start_time).getTime() : NaN;
+      const sport = parsed.session?.sub_sport === 'trail' && parsed.session.sport === 'running'
+        ? 'trail_running'
+        : parsed.session?.sport ?? '';
+      if (parsed.session) {
+        activities.push({
+          id: file,
+          name: names[path.basename(file, '.fit')] ?? '',
+          sport,
+          startTime: Number.isNaN(startTime) ? 0 : startTime,
+          distance: parsed.session.total_distance ?? 0,
+          timerTime: parsed.session.total_timer_time ?? 0,
+          elapsedTime: parsed.session.total_elapsed_time ?? 0,
+          ascent: parsed.session.total_ascent ?? 0,
+          calories: parsed.session.total_calories ?? 0,
+          avgHeartRate: parsed.session.avg_heart_rate ?? 0,
+        });
+      }
       if (parsed.points.length > 0) {
-        const startTime = parsed.session?.start_time ? new Date(parsed.session.start_time).getTime() : NaN;
         tracks.push({
           ...formatTrackName(parsed.session, file, names[path.basename(file, '.fit')]),
-          sport: parsed.session?.sub_sport === 'trail' && parsed.session.sport === 'running'
-            ? 'trail_running'
-            : parsed.session?.sport ?? '',
+          sport,
           id: file,
           startTime: Number.isNaN(startTime) ? 0 : startTime,
           distance: parsed.session?.total_distance ?? 0,
@@ -905,6 +925,7 @@ async function main(): Promise<void> {
   if (cacheHits > 0) console.log(`  (${cacheHits} file(s) loaded from cache)`);
 
   const html = buildHTML(tracks);
+  const dashboardHtml = buildDashboardHTML(activities);
 
   const server = http.createServer((req, res) => {
     if (req.url === '/__reload') {
@@ -913,12 +934,13 @@ async function main(): Promise<void> {
       return;
     }
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(html);
+    res.end(req.url?.split('?')[0] === '/dashboard' ? dashboardHtml : html);
   });
 
   const port = 3000;
   server.listen(port, '127.0.0.1', () => {
     console.log(`\nMap ready → http://localhost:${port}`);
+    console.log(`Dashboard → http://localhost:${port}/dashboard`);
     console.log('Press Ctrl+C to stop.\n');
   });
 }
