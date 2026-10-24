@@ -19,8 +19,9 @@ export function buildMapHTML(tracks: Track[]): string {
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="" />
+  <link rel="stylesheet" href="/css/base.css" />
+  <link rel="stylesheet" href="/css/unit-switch.css" />
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     #map { height: 100vh; }
     #panel {
@@ -81,12 +82,7 @@ export function buildMapHTML(tracks: Track[]): string {
       cursor: pointer;
     }
     .sort-bar button { font-size: 11px; }
-    .unit-row { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 8px; font-size: 12px; color: #888; }
-    .unit-row span.on { color: #fff; font-weight: 600; }
-    .switch { position: relative; width: 38px; height: 20px; padding: 0; border: none; border-radius: 10px; background: #3a3e4a; cursor: pointer; transition: background 0.15s; }
-    .switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform 0.15s; }
-    .switch[aria-checked="true"] { background: #7B2CBF; }
-    .switch[aria-checked="true"]::after { transform: translateX(18px); }
+    .unit-row { justify-content: center; margin-bottom: 8px; }
     .mode-toggle button.on, .sort-bar button.on { background: #7B2CBF; color: #fff; border-color: #7B2CBF; }
     #legend { display: none; margin-bottom: 8px; }
     #legend .bar { height: 8px; border-radius: 4px; background: linear-gradient(to right, hsl(275,100%,50%), hsl(240,100%,50%), hsl(180,100%,50%), hsl(120,100%,50%), hsl(60,100%,50%), hsl(30,100%,50%), hsl(0,100%,50%)); }
@@ -212,49 +208,23 @@ export function buildMapHTML(tracks: Track[]): string {
     <div class="d-grid"></div>
   </div>
   <div id="chart"><div class="c-stats"></div><canvas></canvas></div>
-  <script>
-    // Live reload: server restarts (tsx watch) drop the stream; reload once it's back.
-    (function () {
-      const es = new EventSource('/__reload');
-      es.onerror = () => {
-        es.close();
-        const poll = setInterval(() => {
-          fetch('/', { cache: 'no-store' }).then(r => { if (r.ok) { clearInterval(poll); location.reload(); } }).catch(() => {});
-        }, 500);
-      };
-    })();
-  </script>
-  <script>
+  <script type="module" src="/js/shared/reload.js"></script>
+  <script type="module">
+    import { sportIconClass } from '/js/shared/sport-icons.js';
+    import { getUnit, isMi, distMul, elevMul, elevUnit, fmtElev } from '/js/shared/units.js';
+    import { initUnitSwitch } from '/js/shared/unit-switch.js';
+
     const COLORS = ${colorsJson};
     const tracks = ${tracksJson};
 
-    const SPORT_ICONS = {
-      running: 'person-running',
-      trail_running: 'mountain',
-      cycling: 'person-biking',
-      e_biking: 'person-biking',
-      walking: 'person-walking',
-      hiking: 'person-hiking',
-      swimming: 'person-swimming',
-      alpine_skiing: 'person-skiing',
-      cross_country_skiing: 'person-skiing-nordic',
-      snowboarding: 'person-snowboarding',
-      training: 'dumbbell',
-    };
     function sportIcon(sport) {
       const el = document.createElement('i');
-      el.className = 'swatch fa-solid fa-' + (SPORT_ICONS[sport] || 'location-dot');
+      el.className = 'swatch ' + sportIconClass(sport);
       el.title = (sport || 'activity').replace(/_/g, ' ');
       return el;
     }
 
-    // ---- Units ----
-    const KM_TO_MI = 0.621371, KM_TO_FT = 3280.84, KM_TO_M = 1000;
-    let units = 'mi';
-    try { if (localStorage.getItem('units') === 'km') units = 'km'; } catch (e) {}
-    const isMi = () => units === 'mi';
-    const fmtDist = km => (km * (isMi() ? KM_TO_MI : 1)).toFixed(1) + ' ' + units;
-    const fmtElev = km => Math.round(km * (isMi() ? KM_TO_FT : KM_TO_M)).toLocaleString() + (isMi() ? ' ft' : ' m');
+    const fmtDist = km => (km * distMul()).toFixed(1) + ' ' + getUnit();
 
     const map = L.map('map', { preferCanvas: true });
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -343,14 +313,14 @@ export function buildMapHTML(tracks: Track[]): string {
     }
     function fmtPace(secPerUnit) {
       const m = Math.floor(secPerUnit / 60), s = Math.round(secPerUnit % 60);
-      return m + ':' + String(s).padStart(2, '0') + ' /' + units;
+      return m + ':' + String(s).padStart(2, '0') + ' /' + getUnit();
     }
 
     function showDetail(track) {
       detailTrack = track;
-      const dist = track.distance * (isMi() ? KM_TO_MI : 1);
+      const dist = track.distance * distMul();
       const rows = [
-        ['Distance', dist > 0 ? dist.toFixed(2) + ' ' + units : null],
+        ['Distance', dist > 0 ? dist.toFixed(2) + ' ' + getUnit() : null],
         ['Moving time', track.timerTime > 0 ? fmtDuration(track.timerTime) : null],
         ['Elapsed time', track.elapsedTime > 0 ? fmtDuration(track.elapsedTime) : null],
         ['Avg pace', dist > 0 && track.timerTime > 0 ? fmtPace(track.timerTime / dist) : null],
@@ -415,11 +385,11 @@ export function buildMapHTML(tracks: Track[]): string {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, W, H);
 
-      const dMul = isMi() ? KM_TO_MI : 1, aMul = isMi() ? KM_TO_FT : KM_TO_M;
+      const dMul = distMul(), aMul = elevMul();
       const xs = series.map(p => p.d * dMul), ys = series.map(p => p.a * aMul);
       let yMin = Infinity, yMax = -Infinity;
       for (const y of ys) { if (y < yMin) yMin = y; if (y > yMax) yMax = y; }
-      const eu = isMi() ? ' ft' : ' m', fmtE = v => Math.round(v).toLocaleString() + eu;
+      const eu = ' ' + elevUnit(), fmtE = v => Math.round(v).toLocaleString() + eu;
       const gain = track.ascent > 0 ? track.ascent * aMul : null, loss = track.descent > 0 ? track.descent * aMul : null;
       const stat = (cls, label, v) => '<span class="' + cls + '">' + label + '<b>' + v + '</b></span>';
       chartEl.querySelector('.c-stats').innerHTML =
@@ -443,13 +413,13 @@ export function buildMapHTML(tracks: Track[]): string {
       for (let i = 0; i <= 3; i++) {
         const v = yMin + ((yMax - yMin) * i) / 3, y = py(v);
         ctx.beginPath(); ctx.moveTo(L_, y); ctx.lineTo(W - R_, y); ctx.stroke();
-        ctx.fillText(Math.round(v).toLocaleString() + (isMi() ? ' ft' : ' m'), L_ - 6, y);
+        ctx.fillText(Math.round(v).toLocaleString() + eu, L_ - 6, y);
       }
       ctx.textBaseline = 'top';
       ctx.textAlign = 'center';
       for (let i = 0; i <= 4; i++) {
         const v = xMin + ((xMax - xMin) * i) / 4;
-        ctx.fillText(v.toFixed(1) + ' ' + units, px(v), H - B_ + 6);
+        ctx.fillText(v.toFixed(1) + ' ' + getUnit(), px(v), H - B_ + 6);
       }
 
       ctx.beginPath();
@@ -471,7 +441,7 @@ export function buildMapHTML(tracks: Track[]): string {
         ctx.beginPath(); ctx.moveTo(x, T_); ctx.lineTo(x, H - B_); ctx.stroke();
         ctx.fillStyle = '#fff';
         ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill();
-        const label = xs[hoverIdx].toFixed(2) + ' ' + units + ' · ' + Math.round(ys[hoverIdx]).toLocaleString() + (isMi() ? ' ft' : ' m');
+        const label = xs[hoverIdx].toFixed(2) + ' ' + getUnit() + ' · ' + Math.round(ys[hoverIdx]).toLocaleString() + eu;
         ctx.font = '11px -apple-system, BlinkMacSystemFont, sans-serif';
         ctx.textBaseline = 'top';
         ctx.textAlign = x > W / 2 ? 'right' : 'left';
@@ -497,19 +467,11 @@ export function buildMapHTML(tracks: Track[]): string {
     window.addEventListener('resize', () => drawChart());
 
     // ---- Unit toggle ----
-    const unitBtn = document.getElementById('unit-switch');
     function applyUnits() {
-      unitBtn.setAttribute('aria-checked', String(!isMi()));
-      document.getElementById('u-mi').classList.toggle('on', isMi());
-      document.getElementById('u-km').classList.toggle('on', !isMi());
       distEls.forEach(({ el, track }) => { el.textContent = track.distance > 0 ? fmtDist(track.distance) : ''; });
       if (detailTrack) showDetail(detailTrack);
     }
-    unitBtn.addEventListener('click', () => {
-      units = isMi() ? 'km' : 'mi';
-      try { localStorage.setItem('units', units); } catch (e) {}
-      applyUnits();
-    });
+    initUnitSwitch(applyUnits);
     applyUnits();
 
     // ---- Sorting ----

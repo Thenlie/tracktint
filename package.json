@@ -3,9 +3,10 @@
   "version": "1.0.0",
   "description": "Visualize GPS tracks from FIT files on an interactive map",
   "scripts": {
-    "start": "tsc --noEmit && tsx --tsconfig tsconfig.json src/index.ts",
-    "dev": "tsx watch --tsconfig tsconfig.json src/index.ts",
-    "build": "tsc",
+    "build:client": "tsc -p tsconfig.client.json",
+    "start": "tsc --noEmit && npm run build:client && tsx --tsconfig tsconfig.json src/index.ts",
+    "dev": "tsc -p tsconfig.client.json --watch --preserveWatchOutput & tsx watch --include 'public/**' --tsconfig tsconfig.json src/index.ts",
+    "build": "tsc && npm run build:client",
     "run:dist": "node dist/index.js",
     "fetch-names": "tsc --noEmit && tsx --tsconfig tsconfig.json src/fetch-names.ts"
   },

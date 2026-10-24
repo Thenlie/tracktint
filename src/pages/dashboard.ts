@@ -10,20 +10,15 @@ export function buildDashboardHTML(activities: DashActivity[]): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dashboard · FIT Map Viewer</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="" />
+  <link rel="stylesheet" href="/css/base.css" />
+  <link rel="stylesheet" href="/css/unit-switch.css" />
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #14161c; color: #e6e6e6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 0 20px 40px; }
     .wrap { max-width: 1100px; margin: 0 auto; }
     header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 18px 0 14px; }
     header h1 { font-size: 20px; font-weight: 700; margin-right: auto; }
     a.nav { color: #ccc; text-decoration: none; font-size: 12px; background: #2a2d36; border: 1px solid #3a3e4a; border-radius: 6px; padding: 6px 12px; }
     a.nav:hover { border-color: #7B2CBF; }
-    .unit-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #888; }
-    .unit-row span.on { color: #fff; font-weight: 600; }
-    .switch { position: relative; width: 38px; height: 20px; padding: 0; border: none; border-radius: 10px; background: #3a3e4a; cursor: pointer; transition: background 0.15s; }
-    .switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform 0.15s; }
-    .switch[aria-checked="true"] { background: #7B2CBF; }
-    .switch[aria-checked="true"]::after { transform: translateX(18px); }
     .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
     .chip { font-size: 12px; color: #ccc; background: #2a2d36; border: 1px solid #3a3e4a; border-radius: 14px; padding: 5px 12px; cursor: pointer; }
     .chip i { margin-right: 6px; }
@@ -92,54 +87,35 @@ export function buildDashboardHTML(activities: DashActivity[]): string {
     <div id="body"></div>
   </div>
   <div id="tip"></div>
-  <script>
-    (function () {
-      const es = new EventSource('/__reload');
-      es.onerror = () => {
-        es.close();
-        const poll = setInterval(() => {
-          fetch('/dashboard', { cache: 'no-store' }).then(r => { if (r.ok) { clearInterval(poll); location.reload(); } }).catch(() => {});
-        }, 500);
-      };
-    })();
-  </script>
-  <script>
+  <script type="module" src="/js/shared/reload.js"></script>
+  <script type="module">
+    import { sportIconClass } from '/js/shared/sport-icons.js';
+    import { getUnit, isMi, distMul, fmtElev } from '/js/shared/units.js';
+    import { initUnitSwitch } from '/js/shared/unit-switch.js';
+
     const ACTS = ${dataJson};
 
-    const SPORT_ICONS = {
-      running: 'person-running', trail_running: 'mountain', cycling: 'person-biking', e_biking: 'person-biking',
-      walking: 'person-walking', hiking: 'person-hiking', swimming: 'person-swimming',
-      alpine_skiing: 'person-skiing', cross_country_skiing: 'person-skiing-nordic',
-      snowboarding: 'person-snowboarding', training: 'dumbbell',
-    };
     const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-    // ---- Units ----
-    const KM_TO_MI = 0.621371, KM_TO_FT = 3280.84, KM_TO_M = 1000;
-    let units = 'mi';
-    try { if (localStorage.getItem('units') === 'km') units = 'km'; } catch (e) {}
-    const isMi = () => units === 'mi';
-    const dMul = () => (isMi() ? KM_TO_MI : 1);
-    const fmtDist = km => (km * dMul()).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' ' + units;
-    const fmtElev = km => Math.round(km * (isMi() ? KM_TO_FT : KM_TO_M)).toLocaleString() + (isMi() ? ' ft' : ' m');
+    const fmtDist = km => (km * distMul()).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' ' + getUnit();
     function fmtDur(sec) {
       const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
       return h > 0 ? h.toLocaleString() + 'h ' + String(m).padStart(2, '0') + 'm' : m + 'm';
     }
     function fmtPace(sec, km) {
       if (!(sec > 0 && km > 0)) return '–';
-      const p = sec / (km * dMul());
-      return Math.floor(p / 60) + ':' + String(Math.round(p % 60)).padStart(2, '0') + ' /' + units;
+      const p = sec / (km * distMul());
+      return Math.floor(p / 60) + ':' + String(Math.round(p % 60)).padStart(2, '0') + ' /' + getUnit();
     }
     function fmtSpeed(sec, km) {
       if (!(sec > 0 && km > 0)) return '–';
-      return (km * dMul() / (sec / 3600)).toFixed(1) + ' ' + (isMi() ? 'mph' : 'km/h');
+      return (km * distMul() / (sec / 3600)).toFixed(1) + ' ' + (isMi() ? 'mph' : 'km/h');
     }
     const isRide = s => s === 'cycling' || s === 'e_biking';
     const fmtRate = (s, sec, km) => (isRide(s) ? fmtSpeed(sec, km) : fmtPace(sec, km));
     const sportName = s => s ? s.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase()) : 'Other';
-    const icon = s => '<i class="fa-solid fa-' + (SPORT_ICONS[s] || 'location-dot') + '"></i>';
+    const icon = s => '<i class="' + sportIconClass(s) + '"></i>';
     const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     const pad = n => String(n).padStart(2, '0');
     const keyOf = t => { const d = new Date(t); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); };
@@ -183,7 +159,6 @@ export function buildDashboardHTML(activities: DashActivity[]): string {
 
     function tilesHtml(list) {
       const dist = sum(list, a => a.distance), time = sum(list, a => a.timerTime);
-      const hrs = list.filter(a => a.avgHeartRate > 0);
       const st = streaks(list);
       const tile = (l, v, s) => '<div class="tile"><div class="l">' + l + '</div><div class="v">' + v + '</div>' + (s ? '<div class="s">' + s + '</div>' : '') + '</div>';
       return '<div class="tiles">' +
@@ -191,10 +166,8 @@ export function buildDashboardHTML(activities: DashActivity[]): string {
         tile('Distance', fmtDist(dist), list.length ? 'avg ' + fmtDist(dist / list.length) : '') +
         tile('Moving time', fmtDur(time), list.length ? 'avg ' + fmtDur(time / list.length) : '') +
         tile('Elevation gain', fmtElev(sum(list, a => a.ascent)), '') +
-        tile('Calories', sum(list, a => a.calories).toLocaleString() + ' kcal', '') +
         tile('Active days', st.active.toLocaleString(), '') +
         tile('Longest streak', st.best + ' day' + (st.best === 1 ? '' : 's'), st.cur ? 'current: ' + st.cur : '') +
-        tile('Avg heart rate', hrs.length ? Math.round(sum(hrs, a => a.avgHeartRate) / hrs.length) + ' bpm' : '–', '') +
         '</div>';
     }
 
@@ -272,7 +245,7 @@ export function buildDashboardHTML(activities: DashActivity[]): string {
     function barsHtml(title, items) {
       const max = Math.max(1e-9, ...items.map(i => i.v));
       return '<div class="card"><h2>' + title + '</h2><div class="bars">' + items.map(i =>
-        '<div class="bar-col" title="' + esc(i.title) + '"><div class="bar-val">' + (i.v > 0 ? Math.round(i.v * dMul()) : '') + '</div>' +
+        '<div class="bar-col" title="' + esc(i.title) + '"><div class="bar-val">' + (i.v > 0 ? Math.round(i.v * distMul()) : '') + '</div>' +
         '<div class="bar" style="height:' + Math.round((i.v / max) * 100 * 0.8) + '%"></div><div class="bar-lab">' + i.label + '</div></div>').join('') +
         '</div></div>';
     }
@@ -313,12 +286,11 @@ export function buildDashboardHTML(activities: DashActivity[]): string {
       const row = (k, a, val) => a ? '<div class="rec"><span class="k">' + k + '</span><span class="v">' + val(a) + '</span><span class="w">' + esc(a.name || sportName(a.sport)) + ' · ' + fmtDate(a.startTime) + '</span></div>' : '';
       const rate = a => (a.distance >= 1.6 && a.timerTime > 0 && !isRide(a.sport) ? a.timerTime / a.distance : null);
       const out =
-        row('Longest', best(a => (a.distance > 0 ? a.distance : null), hi), a => fmtDist(a.distance)) +
+        row('Longest distance', best(a => (a.distance > 0 ? a.distance : null), hi), a => fmtDist(a.distance)) +
         row('Longest time', best(a => (a.timerTime > 0 ? a.timerTime : null), hi), a => fmtDur(a.timerTime)) +
         row('Most climbing', best(a => (a.ascent > 0 ? a.ascent : null), hi), a => fmtElev(a.ascent)) +
-        row('Fastest pace', best(rate, lo), a => fmtPace(a.timerTime, a.distance)) +
-        row('Most calories', best(a => (a.calories > 0 ? a.calories : null), hi), a => a.calories.toLocaleString() + ' kcal');
-      return '<div class="card"><h2>Personal records</h2>' + (out || '<div class="empty">No data.</div>') +
+        row('Fastest pace', best(rate, lo), a => fmtPace(a.timerTime, a.distance));
+      return '<div class="card"><h2><i class="fa-solid fa-medal"></i> Personal records</h2>' + (out || '<div class="empty">No data.</div>') +
         '<div class="empty" style="margin-top:8px;font-size:11px">Fastest pace requires at least 1 mi (1.6 km).</div></div>';
     }
 
@@ -326,13 +298,9 @@ export function buildDashboardHTML(activities: DashActivity[]): string {
       renderChips();
       const list = filtered();
       document.getElementById('body').innerHTML = ACTS.length === 0 ? '<div class="empty">No activities found.</div>' :
-        tilesHtml(list) + heatHtml(list) +
+        tilesHtml(list) + heatHtml(list) + recordsHtml(list) +
         '<div class="grid2" style="margin-bottom:16px">' + monthsHtml(list) + weekdayHtml(list) + '</div>' +
-        '<div class="grid2">' + tableHtml(list).replace('class="card"', 'class="card" style="grid-column:1/-1"') + recordsHtml(list) + '</div>';
-      const u = document.getElementById('unit-switch');
-      u.setAttribute('aria-checked', String(!isMi()));
-      document.getElementById('u-mi').classList.toggle('on', isMi());
-      document.getElementById('u-km').classList.toggle('on', !isMi());
+        '<div class="grid2">' + tableHtml(list).replace('class="card"', 'class="card" style="grid-column:1/-1"') + '</div>';
     }
 
     document.getElementById('body').addEventListener('click', e => {
@@ -362,12 +330,7 @@ export function buildDashboardHTML(activities: DashActivity[]): string {
     });
     document.getElementById('body').addEventListener('mouseleave', () => { tip.style.display = 'none'; });
 
-    document.getElementById('unit-switch').addEventListener('click', () => {
-      units = isMi() ? 'km' : 'mi';
-      try { localStorage.setItem('units', units); } catch (e) {}
-      render();
-    });
-
+    initUnitSwitch(render);
     render();
   </script>
 </body>
